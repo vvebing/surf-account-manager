@@ -1,0 +1,144 @@
+{
+  "name": "surf-account-manager",
+  "displayName": "Surf Account Manager",
+  "description": "Surf 账号批量管理：添加、切换、实时额度查询",
+  "version": "0.0.1",
+  "publisher": "vvebing",
+  "engines": {
+    "vscode": "^1.110.1"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "surfAccountManager",
+          "title": "Surf 账号管理",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "surfAccountManager": [
+        {
+          "id": "surfAccounts",
+          "name": "账号列表",
+          "type": "webview",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "surfAccounts",
+        "contents": "暂无账号。\n[添加账号](command:surf-account-manager.batchAdd)"
+      }
+    ],
+    "commands": [
+      {
+        "command": "surf-account-manager.batchAdd",
+        "title": "添加账号",
+        "icon": "$(add)"
+      },
+      {
+        "command": "surf-account-manager.switchAccount",
+        "title": "Surf: 切换账号",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "surf-account-manager.loginAccount",
+        "title": "Surf: 登录账号",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "surf-account-manager.refreshAccount",
+        "title": "Surf: 刷新账号额度",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "surf-account-manager.refreshAll",
+        "title": "Surf: 刷新全部额度",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "surf-account-manager.deleteAccount",
+        "title": "Surf: 删除账号",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "surf-account-manager.deleteAll",
+        "title": "Surf: 删除全部账号",
+        "icon": "$(close-all)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "surf-account-manager.refreshAll",
+          "when": "view == surfAccounts",
+          "group": "navigation@1"
+        },
+        {
+          "command": "surf-account-manager.batchAdd",
+          "when": "view == surfAccounts",
+          "group": "1_add"
+        },
+        {
+          "command": "surf-account-manager.deleteAll",
+          "when": "view == surfAccounts",
+          "group": "3_delete"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "surf-account-manager.refreshAccount",
+          "when": "view == surfAccounts && viewItem == surfAccount",
+          "group": "inline@1"
+        },
+        {
+          "command": "surf-account-manager.deleteAccount",
+          "when": "view == surfAccounts && viewItem == surfAccount",
+          "group": "inline@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Surf Account Manager",
+      "properties": {
+        "surfAccountManager.proxy": {
+          "type": "string",
+          "default": "",
+          "description": "HTTP/HTTPS 代理地址（如 http://127.0.0.1:7890），留空则不使用代理。也可通过环境变量 HTTPS_PROXY 设置。"
+        },
+        "surfAccountManager.autoRefreshIntervalMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "账号额度自动刷新间隔（分钟）。设为 0 可关闭定时更新。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/vscode": "^1.110.1",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.1",
+    "eslint": "^9.39.3",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1"
+  }
+}
