@@ -72,6 +72,11 @@
         "command": "surf-account-manager.deleteAll",
         "title": "Surf: 删除全部账号",
         "icon": "$(close-all)"
+      },
+      {
+        "command": "surf-account-manager.exportAll",
+        "title": "Surf: 导出全部账号",
+        "icon": "$(export)"
       }
     ],
     "menus": {
@@ -85,6 +90,11 @@
           "command": "surf-account-manager.batchAdd",
           "when": "view == surfAccounts",
           "group": "1_add"
+        },
+        {
+          "command": "surf-account-manager.exportAll",
+          "when": "view == surfAccounts",
+          "group": "2_export"
         },
         {
           "command": "surf-account-manager.deleteAll",

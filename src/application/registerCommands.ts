@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { ManagedAccount } from '../domain/account';
 import type { AccountStore } from '../infrastructure/accountStore';
 import { BatchAddPanel } from '../presentation/batchAddPanel';
 
@@ -7,6 +8,11 @@ interface AccountCommandArgument {
 	account?: {
 		id?: string;
 	};
+}
+
+interface ExportedAccountCredential {
+	email: string;
+	password: string;
 }
 
 function resolveAccountId(argument?: string | AccountCommandArgument): string | undefined {
@@ -20,6 +26,13 @@ function resolveAccountId(argument?: string | AccountCommandArgument): string | 
 		return argument.account.id;
 	}
 	return undefined;
+}
+
+function toExportedCredentials(accounts: readonly ManagedAccount[]): ExportedAccountCredential[] {
+	return accounts.map((account) => ({
+		email: account.email,
+		password: account.password,
+	}));
 }
 
 async function switchOrLoginAccount(store: AccountStore, argument?: string | AccountCommandArgument): Promise<void> {
@@ -187,6 +200,19 @@ export function registerCommands(
 
 			await store.deleteAllAccounts();
 			vscode.window.showInformationMessage('全部账号已删除');
+		}),
+	);
+
+	context.subscriptions.push(
+		vscode.commands.registerCommand('surf-account-manager.exportAll', async () => {
+			if (store.accounts.length === 0) {
+				vscode.window.showInformationMessage('暂无账号');
+				return;
+			}
+
+			const accounts = toExportedCredentials(store.accounts);
+			await vscode.env.clipboard.writeText(JSON.stringify(accounts, null, 2));
+			vscode.window.showInformationMessage(`已复制 ${accounts.length} 个账号密码 JSON`);
 		}),
 	);
 }

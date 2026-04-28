@@ -158,13 +158,39 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			await vscode.commands.executeCommand('surf-account-manager.refreshAll');
 			return;
 		}
+		if (payload.command === 'exportAll') {
+			await vscode.commands.executeCommand('surf-account-manager.exportAll');
+			return;
+		}
 		if (payload.command === 'refreshAccount' && payload.accountId) {
 			await vscode.commands.executeCommand('surf-account-manager.refreshAccount', payload.accountId);
 			return;
 		}
 		if (payload.command === 'loginAccount' && payload.accountId) {
 			await vscode.commands.executeCommand('surf-account-manager.loginAccount', payload.accountId);
+			return;
 		}
+		if (payload.command === 'deleteAccount' && payload.accountId) {
+			await vscode.commands.executeCommand('surf-account-manager.deleteAccount', payload.accountId);
+			return;
+		}
+		if (payload.command === 'exportAccount' && payload.accountId) {
+			await this.exportAccount(payload.accountId);
+		}
+	}
+
+	private async exportAccount(accountId: string): Promise<void> {
+		const account = this.store.accounts.find((item) => item.id === accountId);
+		if (!account) {
+			vscode.window.showErrorMessage(`账号不存在: ${accountId}`);
+			return;
+		}
+
+		await vscode.env.clipboard.writeText(JSON.stringify({
+			email: account.email,
+			password: account.password,
+		}, null, 2));
+		vscode.window.showInformationMessage('账号密码已复制为 JSON');
 	}
 
 	private render(): void {
@@ -191,9 +217,15 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			--button-bg: var(--vscode-button-secondaryBackground, var(--vscode-button-background));
 			--button-fg: var(--vscode-button-secondaryForeground, var(--vscode-button-foreground));
 			--button-hover: var(--vscode-button-secondaryHoverBackground, var(--vscode-button-hoverBackground));
+			--primary-button-bg: var(--vscode-button-background);
+			--primary-button-fg: var(--vscode-button-foreground);
+			--primary-button-hover: var(--vscode-button-hoverBackground);
 			--accent: var(--vscode-progressBar-background, var(--vscode-button-background));
 			--warning: var(--vscode-editorWarning-foreground, #cca700);
 			--error: var(--vscode-editorError-foreground, #f14c4c);
+			--danger-button-bg: var(--vscode-inputValidation-errorBackground, #a1260d);
+			--danger-button-fg: var(--vscode-inputValidation-errorForeground, var(--vscode-button-foreground));
+			--danger-button-hover: var(--vscode-testing-iconFailed, #c42b1c);
 		}
 		* { box-sizing: border-box; }
 		body {
@@ -214,6 +246,16 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			font: inherit;
 		}
 		button:hover { background: var(--button-hover); }
+		button.login-button {
+			color: var(--primary-button-fg);
+			background: var(--primary-button-bg);
+		}
+		button.login-button:hover { background: var(--primary-button-hover); }
+		button.delete-button {
+			color: var(--danger-button-fg);
+			background: var(--danger-button-bg);
+		}
+		button.delete-button:hover { background: var(--danger-button-hover); }
 		.toolbar {
 			display: flex;
 			gap: 8px;
@@ -252,12 +294,13 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 		.status.warning { color: var(--warning); }
 		.actions {
 			display: flex;
+			flex-wrap: wrap;
 			gap: 8px;
 			margin-bottom: 10px;
 		}
 		.quota-row {
 			display: grid;
-			grid-template-columns: minmax(118px, 140px) minmax(48px, 1fr) auto;
+			grid-template-columns: 118px minmax(48px, 1fr) auto;
 			align-items: center;
 			gap: 8px;
 			margin-top: 7px;
@@ -306,6 +349,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 	<div class="toolbar">
 		<button type="button" id="refresh-all">刷新全部</button>
 		<button type="button" id="add-account">添加帐号</button>
+		<button type="button" id="export-all">导出全部</button>
 	</div>
 	<div id="root"></div>
 	<script nonce="${nonce}">
@@ -314,6 +358,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			const root = document.getElementById('root');
 			const refreshAllButton = document.getElementById('refresh-all');
 			const addAccountButton = document.getElementById('add-account');
+			const exportAllButton = document.getElementById('export-all');
 			let accounts = [];
 
 			function createElement(tag, className, text) {
@@ -363,7 +408,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			function appendQuotaRow(parent, label, percent, resetDate) {
 				const row = createElement('div', 'quota-row');
 				const resetLabel = compactResetDate(resetDate);
-				const labelElement = createElement('div', 'quota-label', resetLabel ? label + '（' + resetLabel + '）' : label);
+				const labelElement = createElement('div', 'quota-label', resetLabel ? label + '(' + resetLabel + ')' : label);
 				const progress = createElement('div', 'progress');
 				const fill = createElement('div', 'progress-fill' + getLevel(percent));
 				const value = createElement('div', 'quota-value', percent === undefined ? '待刷新' : percent + '%');
@@ -391,19 +436,29 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 				const status = createElement('div', 'status' + statusClass, statusText);
 				const actions = createElement('div', 'actions');
 				const refresh = createElement('button', '', '刷新');
-				const login = createElement('button', '', '登录');
+				const login = createElement('button', 'login-button', '登录');
+				const remove = createElement('button', 'delete-button', '删除');
+				const exportButton = createElement('button', '', '导出');
 
 				refresh.type = 'button';
 				login.type = 'button';
+				remove.type = 'button';
+				exportButton.type = 'button';
 				refresh.title = '刷新帐号额度';
 				login.title = '登录此帐号';
+				remove.title = '删除此帐号';
+				exportButton.title = '复制帐号密码 JSON';
 				refresh.addEventListener('click', () => vscode.postMessage({ command: 'refreshAccount', accountId: account.id }));
 				login.addEventListener('click', () => vscode.postMessage({ command: 'loginAccount', accountId: account.id }));
+				remove.addEventListener('click', () => vscode.postMessage({ command: 'deleteAccount', accountId: account.id }));
+				exportButton.addEventListener('click', () => vscode.postMessage({ command: 'exportAccount', accountId: account.id }));
 
 				title.appendChild(email);
 				title.appendChild(status);
 				actions.appendChild(refresh);
 				actions.appendChild(login);
+				actions.appendChild(remove);
+				actions.appendChild(exportButton);
 				card.appendChild(title);
 				card.appendChild(actions);
 				appendQuotaRow(card, '今日', account.dailyRemaining, account.dailyResetDate);
@@ -431,6 +486,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 
 			refreshAllButton.addEventListener('click', () => vscode.postMessage({ command: 'refreshAll' }));
 			addAccountButton.addEventListener('click', () => vscode.postMessage({ command: 'batchAdd' }));
+			exportAllButton.addEventListener('click', () => vscode.postMessage({ command: 'exportAll' }));
 			window.addEventListener('message', (event) => {
 				const message = event.data;
 				if (message.command === 'render') {
