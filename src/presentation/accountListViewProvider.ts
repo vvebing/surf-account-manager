@@ -6,6 +6,7 @@ interface WebviewAccount {
 	id: string;
 	email: string;
 	planLabel?: string;
+	planEndsInLabel: string;
 	statusLabel: string;
 	current: boolean;
 	hasError: boolean;
@@ -40,6 +41,20 @@ function getWeeklyRemainingPercent(account: ManagedAccount): number | undefined 
 
 function getPlanLabel(account: ManagedAccount): string | undefined {
 	return account.planName ?? account.planType;
+}
+
+function getPlanEndsInLabel(account: ManagedAccount): string {
+	if (!account.planEnd) {
+		return 'Plan ends in 待刷新';
+	}
+
+	const planEndDate = new Date(account.planEnd * 1000);
+	if (Number.isNaN(planEndDate.getTime())) {
+		return 'Plan ends in 待刷新';
+	}
+
+	const daysLeft = Math.max(0, Math.ceil((planEndDate.getTime() - Date.now()) / 86400000));
+	return `Plan ends in ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}`;
 }
 
 function isLowQuotaAccount(account: ManagedAccount): boolean {
@@ -93,6 +108,7 @@ function toWebviewAccounts(accounts: readonly ManagedAccount[], currentAccountId
 				id: account.id,
 				email: account.email,
 				planLabel: getPlanLabel(account),
+				planEndsInLabel: getPlanEndsInLabel(account),
 				statusLabel: getStatusLabel(account, current),
 				current,
 				hasError: Boolean(account.quotaQueryError),
@@ -194,6 +210,10 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 	}
 
 	private render(): void {
+		if (this.view) {
+			this.view.title = `帐号列表 (${this.store.accounts.length})`;
+		}
+
 		void this.view?.webview.postMessage({
 			command: 'render',
 			accounts: toWebviewAccounts(this.store.accounts, this.store.currentAccountId),
@@ -292,6 +312,11 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 		}
 		.status.error { color: var(--error); }
 		.status.warning { color: var(--warning); }
+		.plan-end {
+			color: var(--muted);
+			font-size: 12px;
+			margin-bottom: 8px;
+		}
 		.actions {
 			display: flex;
 			flex-wrap: wrap;
@@ -434,6 +459,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 				const statusClass = account.hasError ? ' error' : account.statusLabel.includes('低额度') ? ' warning' : '';
 				const statusText = account.planLabel ? account.statusLabel + ' · ' + account.planLabel : account.statusLabel;
 				const status = createElement('div', 'status' + statusClass, statusText);
+				const planEnd = createElement('div', 'plan-end', account.planEndsInLabel);
 				const actions = createElement('div', 'actions');
 				const refresh = createElement('button', '', '刷新');
 				const login = createElement('button', 'login-button', '登录');
@@ -460,6 +486,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 				actions.appendChild(remove);
 				actions.appendChild(exportButton);
 				card.appendChild(title);
+				card.appendChild(planEnd);
 				card.appendChild(actions);
 				appendQuotaRow(card, '今日', account.dailyRemaining, account.dailyResetDate);
 				appendQuotaRow(card, '本周', account.weeklyRemaining, account.weeklyResetDate);
