@@ -5,6 +5,11 @@ import { activateWindsurfLogin } from './windsurfAuth';
 
 const STORAGE_KEY = 'surf-account-manager.accounts';
 const CURRENT_ACCOUNT_KEY = 'surf-account-manager.currentAccountId';
+const BATCH_ADD_DELAY_MS = 750;
+
+function delay(milliseconds: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
 
 export class AccountStore {
 	private accountsState: ManagedAccount[] = [];
@@ -62,7 +67,8 @@ export class AccountStore {
 		const accounts: ManagedAccount[] = [];
 		const failures: BatchAddResult['failures'] = [];
 
-		for (const credential of credentials) {
+		for (let index = 0; index < credentials.length; index += 1) {
+			const credential = credentials[index];
 			const email = credential.email.trim();
 			const password = credential.password;
 			if (!email || !password) {
@@ -80,6 +86,9 @@ export class AccountStore {
 					error: String(error).replace(/^Error:\s*/, ''),
 					line: credential.sourceLine,
 				});
+			}
+			if (index < credentials.length - 1) {
+				await delay(BATCH_ADD_DELAY_MS);
 			}
 		}
 

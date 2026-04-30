@@ -5,10 +5,9 @@ import * as net from 'net';
 import * as tls from 'tls';
 import type { ManagedAccount } from '../domain/account';
 
-const FIREBASE_API_KEY = 'AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY';
-const FIREBASE_SIGN_IN_URL = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword';
-const WINDSURF_REGISTER_API_BASE_URL = 'https://register.windsurf.com';
-const WINDSURF_DEFAULT_API_SERVER_URL = 'https://server.codeium.com';
+const WINDSURF_WEB_BACKEND_API_BASE_URL = 'https://web-backend.windsurf.com';
+const WINDSURF_DEVIN_AUTH_BASE_URL = 'https://windsurf.com/_devin-auth';
+const WINDSURF_AUTH1_API_SERVER_URL = 'https://server.self-serve.windsurf.com';
 const APP_USER_AGENT = 'surf-account-manager-vscode';
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -255,90 +254,116 @@ function jsonRequest(url: string, body: Record<string, unknown>, extraHeaders?: 
 	);
 }
 
-function encodeVarint(value: number): Buffer {
-	const bytes: number[] = [];
-	let current = value;
-	while (current > 0x7f) {
-		bytes.push((current & 0x7f) | 0x80);
-		current >>>= 7;
-	}
-	bytes.push(current & 0x7f);
-	return Buffer.from(bytes);
+interface Auth1SessionResult {
+	sessionToken: string;
+	accountId?: string;
+	primaryOrgId?: string;
 }
 
-function encodeProtobufString(fieldNumber: number, value: string): Buffer {
-	const valueBytes = Buffer.from(value, 'utf8');
-	return Buffer.concat([encodeVarint((fieldNumber << 3) | 2), encodeVarint(valueBytes.length), valueBytes]);
-}
-
-function decodeProtobufString(buffer: Buffer): string | undefined {
-	if (buffer.length < 2 || buffer[0] !== 0x0a) {
-		return undefined;
-	}
-	const length = buffer[1];
-	if (buffer.length < length + 2) {
-		return undefined;
-	}
-	return buffer.slice(2, length + 2).toString('utf8');
-}
-
-function binaryRequest(url: string, data: Buffer, extraHeaders?: Record<string, string>): Promise<{ status: number; body: string; rawBody?: Buffer }> {
-	return doRequest(
-		new URL(url),
-		data,
-		{
-			'Content-Type': 'application/proto',
-			'connect-protocol-version': '1',
-			'User-Agent': APP_USER_AGENT,
-			'Content-Length': data.length,
-			...extraHeaders,
-		},
-		resolveProxy(),
-	);
-}
-
-export interface FirebaseSignInResult {
-	idToken: string;
-	email: string;
-	refreshToken: string;
-	localId: string;
-}
-
-export async function firebaseSignInWithPassword(email: string, password: string): Promise<FirebaseSignInResult> {
-	const response = await jsonRequest(
-		`${FIREBASE_SIGN_IN_URL}?key=${FIREBASE_API_KEY}`,
-		{ email, password, returnSecureToken: true, clientType: 'CLIENT_TYPE_WEB' },
-		{
-			'Accept-Language': 'zh-CN,zh;q=0.9',
-			'Cache-Control': 'no-cache',
-			'X-Client-Version': 'Chrome/JsCore/11.0.0/FirebaseCore-web',
-			Referer: 'https://windsurf.com/',
-		},
-	);
-
-	if (response.status < 200 || response.status >= 300) {
-		let errorMessage = response.body;
-		try {
-			errorMessage = JSON.parse(response.body)?.error?.message ?? response.body;
-		} catch {
+function parseErrorMessageFromBody(body: string): string | undefined {
+	try {
+		const parsed = JSON.parse(body) as Record<string, unknown>;
+		const direct = pickString(parsed, ['detail', 'message', 'error']);
+		if (direct) {
+			return direct;
 		}
-		const friendlyMessages: Record<string, string> = {
-			EMAIL_NOT_FOUND: '邮箱不存在',
-			INVALID_PASSWORD: '邮箱或密码错误',
-			INVALID_LOGIN_CREDENTIALS: '邮箱或密码错误',
-			USER_DISABLED: '账号已被禁用',
-			TOO_MANY_ATTEMPTS_TRY_LATER: '尝试次数过多，请稍后再试',
-		};
-		throw new Error(friendlyMessages[errorMessage] ?? `Firebase 登录失败: ${errorMessage}`);
+		const error = parsed.error;
+		if (error && typeof error === 'object') {
+			return pickString(error as Record<string, unknown>, ['message', 'detail']);
+		}
+	} catch {
+	}
+	return undefined;
+}
+
+async function loginWithAuth1Password(email: string, password: string): Promise<string> {
+	const response = await jsonRequest(
+		`${WINDSURF_DEVIN_AUTH_BASE_URL}/password/login`,
+		{ email, password },
+		{
+			'Content-Type': 'application/json',
+			Accept: 'application/json',
+		},
+	);
+	if (response.status < 200 || response.status >= 300) {
+		if (response.status === 401 || response.status === 403) {
+			throw new Error('邮箱或密码错误');
+		}
+		const detail = parseErrorMessageFromBody(response.body) ?? response.body;
+		throw new Error(`Devin Auth 登录失败: HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
 	}
 
-	const data = JSON.parse(response.body) as FirebaseSignInResult;
-	return {
-		idToken: data.idToken,
-		email: data.email,
-		refreshToken: data.refreshToken,
-		localId: data.localId,
-	};
+	const parsed = JSON.parse(response.body) as Record<string, unknown>;
+	const token = pickString(parsed, ['token']);
+	if (!token) {
+		throw new Error('Devin Auth 响应缺少 token');
+	}
+	return token;
+}
+
+function pickAuth1OrgId(payload: Record<string, unknown>): string | undefined {
+	const orgs = payload.orgs;
+	if (!Array.isArray(orgs)) {
+		return undefined;
+	}
+	const objects = orgs.filter((org): org is Record<string, unknown> => Boolean(org) && typeof org === 'object');
+	const preferred = objects.find((org) => {
+		if (!pickString(org, ['id'])) {
+			return false;
+		}
+		return org.primary === true || org.isPrimary === true || org.isAdmin === true;
+	});
+	return pickString(preferred, ['id']) ?? pickString(objects.find((org) => Boolean(pickString(org, ['id']))), ['id']);
+}
+
+async function requestAuth1Session(auth1Token: string, orgId: string): Promise<Record<string, unknown>> {
+	const response = await jsonRequest(
+		`${WINDSURF_WEB_BACKEND_API_BASE_URL}/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth`,
+		{ auth1Token, orgId },
+		{
+			'Content-Type': 'application/json',
+			Accept: 'application/json',
+			'Connect-Protocol-Version': '1',
+		},
+	);
+	if (response.status < 200 || response.status >= 300) {
+		const detail = parseErrorMessageFromBody(response.body) ?? response.body;
+		throw new Error(`WindsurfPostAuth 失败: HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
+	}
+	return JSON.parse(response.body) as Record<string, unknown>;
+}
+
+async function exchangeAuth1ForSession(auth1Token: string): Promise<Auth1SessionResult> {
+	const first = await requestAuth1Session(auth1Token, '');
+	const firstSession = pickString(first, ['sessionToken', 'session_token']);
+	const firstAccountId = pickString(first, ['accountId', 'account_id']);
+	const firstPrimaryOrgId = pickString(first, ['primaryOrgId', 'primary_org_id']);
+	if (firstSession) {
+		return {
+			sessionToken: firstSession,
+			accountId: firstAccountId,
+			primaryOrgId: firstPrimaryOrgId,
+		};
+	}
+
+	const orgId = pickAuth1OrgId(first);
+	if (orgId) {
+		const second = await requestAuth1Session(auth1Token, orgId);
+		const secondSession = pickString(second, ['sessionToken', 'session_token']);
+		if (secondSession) {
+			return {
+				sessionToken: secondSession,
+				accountId: pickString(second, ['accountId', 'account_id']) ?? firstAccountId,
+				primaryOrgId: pickString(second, ['primaryOrgId', 'primary_org_id']) ?? firstPrimaryOrgId ?? orgId,
+			};
+		}
+	}
+
+	throw new Error('WindsurfPostAuth 未返回 sessionToken');
+}
+
+function isAuth1Account(account: ManagedAccount): boolean {
+	return account.authToken?.startsWith('devin-session-token$') === true || account.apiKey.startsWith('devin-session-token$');
 }
 
 async function postSeatManagement(baseUrl: string, method: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -348,69 +373,6 @@ async function postSeatManagement(baseUrl: string, method: string, body: Record<
 		throw new Error(`请求 Windsurf ${method} 失败: status=${response.status}`);
 	}
 	return JSON.parse(response.body) as Record<string, unknown>;
-}
-
-interface RegisterResult {
-	apiKey: string;
-	apiServerUrl: string;
-	name?: string;
-}
-
-async function registerUser(firebaseIdToken: string): Promise<RegisterResult> {
-	const result = await postSeatManagement(WINDSURF_REGISTER_API_BASE_URL, 'RegisterUser', { firebase_id_token: firebaseIdToken });
-	const apiKey = pickString(result, ['apiKey', 'api_key']);
-	if (!apiKey) {
-		throw new Error('RegisterUser 响应缺少 apiKey');
-	}
-	return {
-		apiKey,
-		apiServerUrl: pickString(result, ['apiServerUrl', 'api_server_url']) ?? WINDSURF_DEFAULT_API_SERVER_URL,
-		name: pickString(result, ['name']),
-	};
-}
-
-async function getOneTimeAuthToken(apiServerUrl: string, firebaseIdToken: string): Promise<string> {
-	const requestData = encodeProtobufString(1, firebaseIdToken);
-	const urls = [WINDSURF_REGISTER_API_BASE_URL];
-	if (apiServerUrl !== WINDSURF_REGISTER_API_BASE_URL) {
-		urls.push(apiServerUrl);
-	}
-
-	let lastError: Error | undefined;
-	for (const baseUrl of urls) {
-		const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
-		const url = `${normalizedBaseUrl}/exa.seat_management_pb.SeatManagementService/GetOneTimeAuthToken`;
-		try {
-			const response = await binaryRequest(url, requestData);
-			if (response.status >= 200 && response.status < 300 && response.rawBody) {
-				let authToken = decodeProtobufString(response.rawBody);
-				if (!authToken) {
-					authToken = response.rawBody.toString('utf8').match(/[a-zA-Z0-9_-]{35,60}/)?.[0];
-				}
-				if (authToken && authToken.length >= 30 && authToken.length <= 60) {
-					return authToken;
-				}
-			}
-		} catch (error) {
-			lastError = error instanceof Error ? error : new Error(String(error));
-		}
-
-		try {
-			const result = await postSeatManagement(baseUrl, 'GetOneTimeAuthToken', { firebase_id_token: firebaseIdToken });
-			const authToken = pickString(result, ['authToken', 'auth_token']);
-			if (authToken) {
-				return authToken;
-			}
-		} catch (error) {
-			lastError = error instanceof Error ? error : new Error(String(error));
-		}
-	}
-
-	throw lastError ?? new Error('GetOneTimeAuthToken 响应缺少 authToken');
-}
-
-async function getCurrentUser(apiServerUrl: string, authToken: string): Promise<Record<string, unknown>> {
-	return postSeatManagement(apiServerUrl, 'GetCurrentUser', { auth_token: authToken, include_subscription: true });
 }
 
 async function getPlanStatus(apiServerUrl: string, authToken: string): Promise<Record<string, unknown>> {
@@ -501,7 +463,6 @@ function parseProtoTimestamp(value: unknown): number | undefined {
 function buildAccountFromRemote(
 	email: string,
 	password: string,
-	firebaseIdToken: string,
 	apiKey: string,
 	apiServerUrl: string,
 	authToken: string | undefined,
@@ -560,7 +521,6 @@ function buildAccountFromRemote(
 		apiKey,
 		apiServerUrl,
 		authToken,
-		firebaseIdToken,
 		planName,
 		planType: planName,
 		availablePromptCredits,
@@ -589,99 +549,68 @@ export async function loginWithPassword(
 	onAuthToken?: (authToken: string) => Promise<unknown>,
 ): Promise<ManagedAccount> {
 	dbg(`loginWithPassword: ${email}`);
-	const firebase = await firebaseSignInWithPassword(email, password);
-	const register = await registerUser(firebase.idToken);
+	const auth1Token = await loginWithAuth1Password(email, password);
+	const session = await exchangeAuth1ForSession(auth1Token);
+	const authToken = session.sessionToken;
 
-	let authToken: string | undefined;
-	try {
-		authToken = await getOneTimeAuthToken(register.apiServerUrl, firebase.idToken);
-	} catch (error) {
-		dbg(`loginWithPassword: authToken FAILED: ${String(error)}`);
-	}
-
-	if (authToken && onAuthToken) {
+	if (onAuthToken) {
 		try {
 			await onAuthToken(authToken);
 		} catch (error) {
-			dbg(`loginWithPassword: authToken injection failed: ${String(error)}`);
+			dbg(`loginWithPassword: Auth1 authToken injection failed: ${String(error)}`);
 		}
 	}
 
-	let currentUser: Record<string, unknown> | undefined;
 	let planStatus: Record<string, unknown> | undefined;
 	let userStatus: Record<string, unknown> | undefined;
-
 	try {
-		currentUser = await getCurrentUser(register.apiServerUrl, register.apiKey);
+		planStatus = await getPlanStatus(WINDSURF_AUTH1_API_SERVER_URL, authToken);
 	} catch {
 	}
 	try {
-		planStatus = await getPlanStatus(register.apiServerUrl, register.apiKey);
-	} catch {
-	}
-	try {
-		userStatus = await getUserStatusByApiKey(register.apiServerUrl, register.apiKey);
+		userStatus = await getUserStatusByApiKey(WINDSURF_AUTH1_API_SERVER_URL, authToken);
 	} catch {
 	}
 
 	return buildAccountFromRemote(
 		email,
 		password,
-		firebase.idToken,
-		register.apiKey,
-		register.apiServerUrl,
 		authToken,
-		register.name,
-		currentUser,
+		WINDSURF_AUTH1_API_SERVER_URL,
+		authToken,
+		email,
+		undefined,
 		userStatus,
 		planStatus,
 	);
 }
 
 export async function refreshAccountQuota(account: ManagedAccount): Promise<ManagedAccount> {
-	let firebaseIdToken = account.firebaseIdToken;
-	if (!firebaseIdToken && account.password) {
-		const firebase = await firebaseSignInWithPassword(account.email, account.password);
-		firebaseIdToken = firebase.idToken;
-	}
-
-	let authToken = account.authToken;
-	if (firebaseIdToken) {
-		try {
-			const register = await registerUser(firebaseIdToken);
-			account.apiKey = register.apiKey;
-			account.apiServerUrl = register.apiServerUrl;
-			try {
-				authToken = await getOneTimeAuthToken(register.apiServerUrl, firebaseIdToken);
-			} catch {
-			}
-		} catch {
-		}
-	}
-
+	const authToken = account.authToken;
 	let currentUser: Record<string, unknown> | undefined;
 	let planStatus: Record<string, unknown> | undefined;
 	let userStatus: Record<string, unknown> | undefined;
 
-	if (account.apiKey) {
+	if (isAuth1Account(account)) {
 		try {
-			currentUser = await getCurrentUser(account.apiServerUrl, account.apiKey);
+			planStatus = await getPlanStatus(account.apiServerUrl || WINDSURF_AUTH1_API_SERVER_URL, authToken ?? account.apiKey);
 		} catch {
 		}
 		try {
-			planStatus = await getPlanStatus(account.apiServerUrl, account.apiKey);
+			userStatus = await getUserStatusByApiKey(account.apiServerUrl || WINDSURF_AUTH1_API_SERVER_URL, authToken ?? account.apiKey);
 		} catch {
 		}
 	}
-	try {
-		userStatus = await getUserStatusByApiKey(account.apiServerUrl, account.apiKey);
-	} catch {
+	if (!userStatus) {
+		try {
+			userStatus = await getUserStatusByApiKey(account.apiServerUrl, account.apiKey);
+		} catch {
+		}
 	}
 
 	const refreshed = buildAccountFromRemote(
 		account.email,
 		account.password,
-		firebaseIdToken ?? '',
 		account.apiKey,
 		account.apiServerUrl,
 		authToken,

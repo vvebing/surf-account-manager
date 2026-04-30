@@ -6,7 +6,6 @@ export interface ManagedAccount {
 	apiKey: string;
 	apiServerUrl: string;
 	authToken?: string;
-	firebaseIdToken?: string;
 	planName?: string;
 	planType?: string;
 	availablePromptCredits?: number;
