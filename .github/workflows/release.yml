@@ -106,15 +106,24 @@ jobs:
         if: steps.release_type.outputs.should_release == 'true'
         run: npm run package -- --out "${{ steps.version.outputs.vsix }}"
 
-      - name: Commit version and tag
+      - name: Commit and push version
         if: steps.release_type.outputs.should_release == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "chore(release): v${{ steps.version.outputs.version }} [skip release]"
+          git push origin HEAD:${{ github.ref_name }}
+
+      - name: Tag and push tag
+        if: steps.release_type.outputs.should_release == 'true'
+        run: |
           git tag "v${{ steps.version.outputs.version }}"
-          git push origin HEAD:${{ github.ref_name }} --follow-tags
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Wait for tag propagation
+        if: steps.release_type.outputs.should_release == 'true'
+        run: sleep 5
 
       - name: Create GitHub Release
         if: steps.release_type.outputs.should_release == 'true'
