@@ -3,29 +3,9 @@ import type { ManagedAccount } from '../domain/account';
 import type { AccountStore } from '../infrastructure/accountStore';
 import { BatchAddPanel } from '../presentation/batchAddPanel';
 
-interface AccountCommandArgument {
-	accountId?: string;
-	account?: {
-		id?: string;
-	};
-}
-
 interface ExportedAccountCredential {
 	email: string;
 	password: string;
-}
-
-function resolveAccountId(argument?: string | AccountCommandArgument): string | undefined {
-	if (typeof argument === 'string') {
-		return argument;
-	}
-	if (argument?.accountId) {
-		return argument.accountId;
-	}
-	if (argument?.account?.id) {
-		return argument.account.id;
-	}
-	return undefined;
 }
 
 function toExportedCredentials(accounts: readonly ManagedAccount[]): ExportedAccountCredential[] {
@@ -35,29 +15,15 @@ function toExportedCredentials(accounts: readonly ManagedAccount[]): ExportedAcc
 	}));
 }
 
-async function switchOrLoginAccount(store: AccountStore, argument?: string | AccountCommandArgument): Promise<void> {
-	let accountId = resolveAccountId(argument);
+async function loginAccount(store: AccountStore, accountId: string | undefined): Promise<void> {
 	if (!accountId) {
-		const items = store.accounts.map((account) => ({
-			label: `${account.id === store.currentAccountId ? '$(check) ' : ''}${account.email}`,
-			description: account.planName ?? '',
-			accountId: account.id,
-		}));
-		if (items.length === 0) {
-			vscode.window.showInformationMessage('暂无账号，请先添加');
-			return;
-		}
-		const selected = await vscode.window.showQuickPick(items, { placeHolder: '选择要登录的账号' });
-		if (!selected) {
-			return;
-		}
-		accountId = selected.accountId;
+		return;
 	}
 
 	try {
 		await vscode.window.withProgress(
 			{ location: vscode.ProgressLocation.Notification, title: '正在登录账号...' },
-			async () => store.switchAccount(accountId!),
+			async () => store.switchAccount(accountId),
 		);
 		const account = store.currentAccount;
 		vscode.window.showInformationMessage(`已登录: ${account?.email ?? accountId}`);
@@ -78,37 +44,21 @@ export function registerCommands(
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('surf-account-manager.switchAccount', async (argument?: string | AccountCommandArgument) => {
-			await switchOrLoginAccount(store, argument);
+		vscode.commands.registerCommand('surf-account-manager.loginAccount', async (accountId?: string) => {
+			await loginAccount(store, accountId);
 		}),
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('surf-account-manager.loginAccount', async (argument?: string | AccountCommandArgument) => {
-			await switchOrLoginAccount(store, argument);
-		}),
-	);
-
-	context.subscriptions.push(
-		vscode.commands.registerCommand('surf-account-manager.refreshAccount', async (argument?: string | AccountCommandArgument) => {
-			let accountId = resolveAccountId(argument);
+		vscode.commands.registerCommand('surf-account-manager.refreshAccount', async (accountId?: string) => {
 			if (!accountId) {
-				const items = store.accounts.map((account) => ({
-					label: account.email,
-					description: account.planName ?? '',
-					accountId: account.id,
-				}));
-				const selected = await vscode.window.showQuickPick(items, { placeHolder: '选择要刷新的账号' });
-				if (!selected) {
-					return;
-				}
-				accountId = selected.accountId;
+				return;
 			}
 
 			try {
 				await vscode.window.withProgress(
 					{ location: vscode.ProgressLocation.Notification, title: '正在刷新账号额度...' },
-					async () => store.refreshAccount(accountId!),
+					async () => store.refreshAccount(accountId),
 				);
 				const account = store.accounts.find((item) => item.id === accountId);
 				if (account) {
@@ -152,19 +102,9 @@ export function registerCommands(
 	);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('surf-account-manager.deleteAccount', async (argument?: string | AccountCommandArgument) => {
-			let accountId = resolveAccountId(argument);
+		vscode.commands.registerCommand('surf-account-manager.deleteAccount', async (accountId?: string) => {
 			if (!accountId) {
-				const items = store.accounts.map((account) => ({
-					label: account.email,
-					description: account.planName ?? '',
-					accountId: account.id,
-				}));
-				const selected = await vscode.window.showQuickPick(items, { placeHolder: '选择要删除的账号' });
-				if (!selected) {
-					return;
-				}
-				accountId = selected.accountId;
+				return;
 			}
 
 			const account = store.accounts.find((item) => item.id === accountId);

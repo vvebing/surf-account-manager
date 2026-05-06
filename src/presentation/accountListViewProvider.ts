@@ -6,7 +6,8 @@ interface WebviewAccount {
 	id: string;
 	email: string;
 	planLabel?: string;
-	planEndsInLabel: string;
+	planEndLabel: string;
+	planExpiresBeforeWeeklyReset: boolean;
 	statusLabel: string;
 	current: boolean;
 	hasError: boolean;
@@ -43,18 +44,37 @@ function getPlanLabel(account: ManagedAccount): string | undefined {
 	return account.planName ?? account.planType;
 }
 
-function getPlanEndsInLabel(account: ManagedAccount): string {
+function formatDateTime(date: Date): string {
+	return new Intl.DateTimeFormat('zh-CN', {
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false,
+	}).format(date);
+}
+
+function getPlanEndLabel(account: ManagedAccount): string {
 	if (!account.planEnd) {
-		return 'Plan ends in 待刷新';
+		return '套餐到期：待刷新';
 	}
 
 	const planEndDate = new Date(account.planEnd * 1000);
 	if (Number.isNaN(planEndDate.getTime())) {
-		return 'Plan ends in 待刷新';
+		return '套餐到期：待刷新';
 	}
 
-	const daysLeft = Math.max(0, Math.ceil((planEndDate.getTime() - Date.now()) / 86400000));
-	return `Plan ends in ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}`;
+	return `套餐到期：${formatDateTime(planEndDate)}`;
+}
+
+function planExpiresBeforeWeeklyReset(account: ManagedAccount): boolean {
+	if (!account.planEnd || !account.weeklyResetDate) {
+		return false;
+	}
+
+	const weeklyResetTime = Date.parse(account.weeklyResetDate);
+	return !Number.isNaN(weeklyResetTime) && account.planEnd * 1000 < weeklyResetTime;
 }
 
 function isLowQuotaAccount(account: ManagedAccount): boolean {
@@ -65,16 +85,29 @@ function isLowQuotaAccount(account: ManagedAccount): boolean {
 		|| (weeklyRemaining !== undefined && weeklyRemaining < LOW_QUOTA_THRESHOLD);
 }
 
-function getSortScore(account: ManagedAccount): number {
-	if (account.quotaQueryError) {
-		return -1_000_000;
+function hasDailyQuota(account: ManagedAccount): boolean {
+	return (getDailyRemainingPercent(account) ?? 0) > 0;
+}
+
+function getPlanEndSortTime(account: ManagedAccount): number {
+	return account.planEnd ?? Number.MAX_SAFE_INTEGER;
+}
+
+function compareAccountOrder(left: ManagedAccount, right: ManagedAccount): number {
+	if (Boolean(left.quotaQueryError) !== Boolean(right.quotaQueryError)) {
+		return left.quotaQueryError ? 1 : -1;
 	}
 
-	return ((getDailyRemainingPercent(account) ?? 0) * 1_000)
-		+ ((getWeeklyRemainingPercent(account) ?? 0) * 100)
-		+ ((account.availablePromptCredits ?? 0) * 10)
-		+ (account.availableFlowCredits ?? 0)
-		+ ((account.lastRefreshedAt ?? account.lastUsed ?? 0) / 100_000);
+	if (hasDailyQuota(left) !== hasDailyQuota(right)) {
+		return hasDailyQuota(left) ? -1 : 1;
+	}
+
+	const planEndDiff = getPlanEndSortTime(left) - getPlanEndSortTime(right);
+	if (planEndDiff !== 0) {
+		return planEndDiff;
+	}
+
+	return left.email.localeCompare(right.email);
 }
 
 function getStatusLabel(account: ManagedAccount, isCurrent: boolean): string {
@@ -100,7 +133,7 @@ function toWebviewAccounts(accounts: readonly ManagedAccount[], currentAccountId
 			if (right.id === currentAccountId) {
 				return 1;
 			}
-			return getSortScore(right) - getSortScore(left);
+			return compareAccountOrder(left, right);
 		})
 		.map((account) => {
 			const current = account.id === currentAccountId;
@@ -108,7 +141,8 @@ function toWebviewAccounts(accounts: readonly ManagedAccount[], currentAccountId
 				id: account.id,
 				email: account.email,
 				planLabel: getPlanLabel(account),
-				planEndsInLabel: getPlanEndsInLabel(account),
+				planEndLabel: getPlanEndLabel(account),
+				planExpiresBeforeWeeklyReset: planExpiresBeforeWeeklyReset(account),
 				statusLabel: getStatusLabel(account, current),
 				current,
 				hasError: Boolean(account.quotaQueryError),
@@ -176,6 +210,10 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 		}
 		if (payload.command === 'exportAll') {
 			await vscode.commands.executeCommand('surf-account-manager.exportAll');
+			return;
+		}
+		if (payload.command === 'deleteAll') {
+			await vscode.commands.executeCommand('surf-account-manager.deleteAll');
 			return;
 		}
 		if (payload.command === 'refreshAccount' && payload.accountId) {
@@ -315,7 +353,11 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 		.plan-end {
 			color: var(--muted);
 			font-size: 12px;
-			margin-bottom: 8px;
+			margin-top: 8px;
+		}
+		.plan-end-warning {
+			color: var(--error);
+			font-weight: 600;
 		}
 		.actions {
 			display: flex;
@@ -375,6 +417,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 		<button type="button" id="refresh-all">刷新全部</button>
 		<button type="button" id="add-account">添加帐号</button>
 		<button type="button" id="export-all">导出全部</button>
+		<button type="button" id="delete-all" class="delete-button">删除全部</button>
 	</div>
 	<div id="root"></div>
 	<script nonce="${nonce}">
@@ -384,6 +427,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			const refreshAllButton = document.getElementById('refresh-all');
 			const addAccountButton = document.getElementById('add-account');
 			const exportAllButton = document.getElementById('export-all');
+			const deleteAllButton = document.getElementById('delete-all');
 			let accounts = [];
 
 			function createElement(tag, className, text) {
@@ -459,7 +503,10 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 				const statusClass = account.hasError ? ' error' : account.statusLabel.includes('低额度') ? ' warning' : '';
 				const statusText = account.planLabel ? account.statusLabel + ' · ' + account.planLabel : account.statusLabel;
 				const status = createElement('div', 'status' + statusClass, statusText);
-				const planEnd = createElement('div', 'plan-end', account.planEndsInLabel);
+				const planEnd = createElement('div', 'plan-end', account.planEndLabel);
+				if (account.planExpiresBeforeWeeklyReset) {
+					planEnd.appendChild(createElement('span', 'plan-end-warning', ' · 早于本周重置'));
+				}
 				const actions = createElement('div', 'actions');
 				const refresh = createElement('button', '', '刷新');
 				const login = createElement('button', 'login-button', '登录');
@@ -486,10 +533,10 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 				actions.appendChild(remove);
 				actions.appendChild(exportButton);
 				card.appendChild(title);
-				card.appendChild(planEnd);
 				card.appendChild(actions);
 				appendQuotaRow(card, '今日', account.dailyRemaining, account.dailyResetDate);
 				appendQuotaRow(card, '本周', account.weeklyRemaining, account.weeklyResetDate);
+				card.appendChild(planEnd);
 
 				if (account.error) {
 					card.appendChild(createElement('div', 'error-message', account.error));
@@ -514,6 +561,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 			refreshAllButton.addEventListener('click', () => vscode.postMessage({ command: 'refreshAll' }));
 			addAccountButton.addEventListener('click', () => vscode.postMessage({ command: 'batchAdd' }));
 			exportAllButton.addEventListener('click', () => vscode.postMessage({ command: 'exportAll' }));
+			deleteAllButton.addEventListener('click', () => vscode.postMessage({ command: 'deleteAll' }));
 			window.addEventListener('message', (event) => {
 				const message = event.data;
 				if (message.command === 'render') {

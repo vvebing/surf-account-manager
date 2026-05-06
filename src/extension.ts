@@ -6,7 +6,6 @@ import { AccountStore } from './infrastructure/accountStore';
 import { setAuthLogger } from './infrastructure/windsurfAuth';
 import { setDebugLogger, setProxyUrl } from './infrastructure/windsurfApi';
 import { AccountListViewProvider } from './presentation/accountListViewProvider';
-import { CurrentAccountStatusBar } from './presentation/currentAccountStatusBar';
 
 export let outputChannel: vscode.OutputChannel;
 const DEFAULT_AUTO_REFRESH_INTERVAL_MINUTES = 30;
@@ -106,7 +105,6 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.registerWebviewViewProvider('surfAccounts', accountListViewProvider),
     new AccountAutoRefresh(store, outputChannel),
   );
-  context.subscriptions.push(new CurrentAccountStatusBar(store));
 
   registerCommands(context, store, outputChannel);
 }
