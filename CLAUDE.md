@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Surf Account Manager is a VS Code extension for managing Surf / Windsurf accounts. It supports batch account import, account login/switching, quota refresh, grouped account display in the Activity Bar, and current-account status in the VS Code status bar.
+Surf Account Manager is a VS Code extension for managing Surf / Windsurf accounts. It supports batch account import, account login/activation, quota refresh, account sorting, account export, and account deletion from the Activity Bar webview tab.
 
 The extension is written in TypeScript, compiled from `src/` to `out/`, and VS Code loads `./out/extension.js` as configured in `package.json`.
 
@@ -17,7 +17,7 @@ The extension is written in TypeScript, compiled from `src/` to `out/`, and VS C
 - Package `.vsix`: `npm run package`
 - Debug extension manually: open the repo in VS Code and press `F5` to launch the Extension Development Host. The launch config runs the default build task, which is `npm run watch`.
 
-There is currently no `npm test` script or single-test command configured in `package.json`. `src/test/extension.test.ts` is only scaffold-level test code; do not claim automated tests were run unless a test runner/script has been added or invoked through VS Code extension testing.
+There is currently no `npm test` script or single-test command configured in `package.json`. Do not claim automated tests were run unless a test runner/script has been added or invoked through VS Code extension testing.
 
 ## Release Workflow
 
@@ -34,7 +34,7 @@ Release bump selection is based on commit messages:
 
 ### Activation and Wiring
 
-`src/extension.ts` is the activation entrypoint. It creates the `Surf Account Manager` output channel, wires API/auth loggers, syncs proxy settings, creates the shared `AccountStore`, registers the `surfAccounts` webview provider, creates the current-account status bar, starts auto-refresh, and delegates command registration to `registerCommands`.
+`src/extension.ts` is the activation entrypoint. It creates the `Surf Account Manager` output channel, wires API/auth loggers, syncs proxy settings, creates the shared `AccountStore`, registers the `surfAccounts` webview provider, starts auto-refresh, and delegates internal command registration to `registerCommands`.
 
 Configuration contributed by `package.json`:
 
@@ -64,10 +64,11 @@ The store is the central mutation point for adding accounts, batch import, switc
 
 ### Commands and User Actions
 
-`src/application/registerCommands.ts` is the command registration hub. Commands declared in `package.json` should be implemented here:
+`src/application/registerCommands.ts` registers internal commands used by the webview. These commands are intentionally not contributed to `package.json`, so user-facing operations happen from the `账号列表` tab rather than the Command Palette, view title actions, context menus, or status bar.
+
+Internal command IDs currently used by the webview:
 
 - `surf-account-manager.batchAdd`
-- `surf-account-manager.switchAccount`
 - `surf-account-manager.loginAccount`
 - `surf-account-manager.refreshAccount`
 - `surf-account-manager.refreshAll`
@@ -75,21 +76,20 @@ The store is the central mutation point for adding accounts, batch import, switc
 - `surf-account-manager.deleteAll`
 - `surf-account-manager.exportAll`
 
-Commands generally resolve an account ID from a tree/webview argument or prompt with `showQuickPick`, execute store operations inside VS Code progress notifications when useful, and report results through VS Code information/error messages.
+Single-account internal commands expect the webview to pass an account ID. Do not add `showQuickPick` fallbacks unless command-palette or context-menu entry points are reintroduced.
 
 ### Presentation Layer
 
-`src/presentation/accountListViewProvider.ts` provides the `surfAccounts` webview view. It renders account cards and forwards webview messages to VS Code commands (`batchAdd`, refresh, login, delete, export). Keep webview data derived from `ManagedAccount` compact and serializable.
+`src/presentation/accountListViewProvider.ts` provides the `surfAccounts` webview view. It renders the account tab, top toolbar actions, account cards, quota progress rows, plan expiry warnings, and forwards webview messages to internal VS Code commands. Keep webview data derived from `ManagedAccount` compact and serializable.
 
 `src/presentation/batchAddPanel.ts` provides the add-account webview panel for single-account and batch imports. It parses pasted JSON or delimited text and calls the store’s add/batch-add methods.
 
-`src/presentation/accountTreeProvider.ts` provides grouped account tree data for current, recommended, available, and abnormal/low-quota accounts. It ranks accounts from quota health, expiry, credits, and freshness.
-
-`src/presentation/currentAccountStatusBar.ts` displays the current account summary. Clicking it opens account switching when accounts exist, or batch add when empty.
+There is no separate account tree provider or current-account status bar. Account display and operations are centralized in the webview tab.
 
 ## Development Notes
 
 - Prefer changing source under `src/`; `out/` is compiled output.
 - If UI behavior changes, verify it in the Extension Development Host rather than relying only on TypeScript compilation.
-- Keep command IDs, contributed view IDs, and webview message command names in sync with `package.json` and the presentation providers.
+- Keep internal command IDs and webview message command names in sync between `registerCommands.ts` and `accountListViewProvider.ts`.
+- Package contributions in `package.json` should stay limited to the Activity Bar container, `surfAccounts` webview, and configuration unless user-facing shortcuts are intentionally reintroduced.
 - The extension stores account passwords and auth tokens in VS Code global state and writes auth files for Windsurf login activation, so avoid expanding export/logging behavior to include more credential material than existing flows require.
