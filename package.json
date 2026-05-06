@@ -2,7 +2,7 @@
   "name": "surf-account-manager",
   "displayName": "Surf Account Manager",
   "description": "Surf 账号批量管理：添加、切换、实时额度查询",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "vvebing",
   "engines": {
     "vscode": "^1.110.1"
