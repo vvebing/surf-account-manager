@@ -254,6 +254,10 @@ function jsonRequest(url: string, body: Record<string, unknown>, extraHeaders?: 
 	);
 }
 
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 interface Auth1SessionResult {
 	sessionToken: string;
 	accountId?: string;
@@ -317,20 +321,34 @@ function pickAuth1OrgId(payload: Record<string, unknown>): string | undefined {
 }
 
 async function requestAuth1Session(auth1Token: string, orgId: string): Promise<Record<string, unknown>> {
-	const response = await jsonRequest(
-		`${WINDSURF_WEB_BACKEND_API_BASE_URL}/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth`,
-		{ auth1Token, orgId },
-		{
-			'Content-Type': 'application/json',
-			Accept: 'application/json',
-			'Connect-Protocol-Version': '1',
-		},
-	);
-	if (response.status < 200 || response.status >= 300) {
+	let lastError = '';
+	for (let attempt = 1; attempt <= 3; attempt++) {
+		const response = await jsonRequest(
+			`${WINDSURF_WEB_BACKEND_API_BASE_URL}/exa.seat_management_pb.SeatManagementService/WindsurfPostAuth`,
+			{ auth1Token, orgId },
+			{
+				'Content-Type': 'application/json',
+				Accept: 'application/json',
+				'Connect-Protocol-Version': '1',
+				Origin: 'https://windsurf.com',
+				Referer: 'https://windsurf.com/account/login',
+				'x-devin-auth1-token': auth1Token,
+			},
+		);
+		if (response.status >= 200 && response.status < 300) {
+			return JSON.parse(response.body) as Record<string, unknown>;
+		}
+
 		const detail = parseErrorMessageFromBody(response.body) ?? response.body;
-		throw new Error(`WindsurfPostAuth 失败: HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
+		lastError = `WindsurfPostAuth 失败: HTTP ${response.status}${detail ? ` (${detail})` : ''}`;
+		const shouldRetry = response.status === 401 || response.status === 403 || response.status === 409 || response.status === 429 || response.status >= 500;
+		if (attempt < 3 && shouldRetry) {
+			await delay(response.status >= 400 && response.status < 500 ? 3000 * attempt : 2000 * attempt);
+			continue;
+		}
+		throw new Error(lastError);
 	}
-	return JSON.parse(response.body) as Record<string, unknown>;
+	throw new Error(lastError || 'WindsurfPostAuth 失败');
 }
 
 async function exchangeAuth1ForSession(auth1Token: string): Promise<Auth1SessionResult> {
@@ -549,7 +567,10 @@ export async function loginWithPassword(
 	onAuthToken?: (authToken: string) => Promise<unknown>,
 ): Promise<ManagedAccount> {
 	dbg(`loginWithPassword: ${email}`);
-	const auth1Token = await loginWithAuth1Password(email, password);
+	const auth1Token = (await loginWithAuth1Password(email, password)).trim();
+	if (!auth1Token.startsWith('auth1_')) {
+		throw new Error('Devin Auth 响应 token 格式异常');
+	}
 	const session = await exchangeAuth1ForSession(auth1Token);
 	const authToken = session.sessionToken;
 
