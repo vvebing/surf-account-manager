@@ -85,10 +85,6 @@ function isLowQuotaAccount(account: ManagedAccount): boolean {
 		|| (weeklyRemaining !== undefined && weeklyRemaining < LOW_QUOTA_THRESHOLD);
 }
 
-function hasDailyQuota(account: ManagedAccount): boolean {
-	return (getDailyRemainingPercent(account) ?? 0) > 0;
-}
-
 function getPlanEndSortTime(account: ManagedAccount): number {
 	return account.planEnd ?? Number.MAX_SAFE_INTEGER;
 }
@@ -98,8 +94,14 @@ function compareAccountOrder(left: ManagedAccount, right: ManagedAccount): numbe
 		return left.quotaQueryError ? 1 : -1;
 	}
 
-	if (hasDailyQuota(left) !== hasDailyQuota(right)) {
-		return hasDailyQuota(left) ? -1 : 1;
+	const weeklyQuota = getWeeklyRemainingPercent(left);
+	if (weeklyQuota !== getWeeklyRemainingPercent(right)) {
+		return (weeklyQuota ?? 0) > 0 ? -1 : 1;
+	}
+
+	const dailyQuota = getDailyRemainingPercent(left);
+	if (dailyQuota !== getDailyRemainingPercent(right)) {
+		return (dailyQuota ?? 0) > 0 ? -1 : 1;
 	}
 
 	const planEndDiff = getPlanEndSortTime(left) - getPlanEndSortTime(right);
@@ -474,12 +476,12 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 					.replace(/\\s+/g, ' ');
 			}
 
-			function appendQuotaRow(parent, label, percent, resetDate) {
+			function appendQuotaRow(parent, label, percent, resetDate, mainPercent) {
 				const row = createElement('div', 'quota-row');
 				const resetLabel = compactResetDate(resetDate);
 				const labelElement = createElement('div', 'quota-label', resetLabel ? label + '(' + resetLabel + ')' : label);
 				const progress = createElement('div', 'progress');
-				const fill = createElement('div', 'progress-fill' + getLevel(percent));
+				const fill = createElement('div', 'progress-fill' + getLevel(+mainPercent > 0 ? percent : mainPercent));
 				const value = createElement('div', 'quota-value', percent === undefined ? '待刷新' : percent + '%');
 
 				if (resetDate) {
@@ -534,7 +536,7 @@ export class AccountListViewProvider implements vscode.WebviewViewProvider, vsco
 				actions.appendChild(exportButton);
 				card.appendChild(title);
 				card.appendChild(actions);
-				appendQuotaRow(card, '今日', account.dailyRemaining, account.dailyResetDate);
+				appendQuotaRow(card, '今日', account.dailyRemaining, account.dailyResetDate, account.weeklyRemaining);
 				appendQuotaRow(card, '本周', account.weeklyRemaining, account.weeklyResetDate);
 				card.appendChild(planEnd);
 
